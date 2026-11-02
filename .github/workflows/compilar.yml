@@ -1,0 +1,389 @@
+name: Compilar APK Android
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Crear código fuente del proyecto
+        run: |
+          mkdir -p app/src/main/java/com/presupuesto/app
+
+          cat << 'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "AdministracionSueldo"
+          include(":app")
+          EOF
+
+          cat << 'EOF' > build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.3.1" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+          }
+          EOF
+
+          cat << 'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat << 'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.presupuesto.app"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.presupuesto.app"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+              buildFeatures {
+                  compose = true
+              }
+              composeOptions {
+                  kotlinCompilerExtensionVersion = "1.5.8"
+              }
+          }
+
+          dependencies {
+              implementation(platform("androidx.compose:compose-bom:2024.02.00"))
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.activity:activity-compose:1.8.2")
+              implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+              implementation("androidx.core:core-ktx:1.12.0")
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="true"
+                  android:icon="@android:drawable/sym_def_app_icon"
+                  android:label="Control Sueldo"
+                  android:supportsRtl="true"
+                  android:theme="@android:style/Theme.Material.NoActionBar">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/presupuesto/app/MainActivity.kt
+          package com.presupuesto.app
+
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.foundation.text.KeyboardOptions
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.Add
+          import androidx.compose.material.icons.filled.DateRange
+          import androidx.compose.material.icons.filled.Home
+          import androidx.compose.material.icons.filled.List
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.input.KeyboardType
+          import androidx.compose.ui.unit.dp
+          import androidx.lifecycle.ViewModel
+          import androidx.lifecycle.viewmodel.compose.viewModel
+          import kotlinx.coroutines.flow.MutableStateFlow
+          import kotlinx.coroutines.flow.asStateFlow
+          import kotlinx.coroutines.flow.update
+          import java.time.LocalDate
+          import java.time.format.TextStyle
+          import java.time.temporal.ChronoUnit
+          import java.util.Locale
+          import java.util.UUID
+
+          data class GastoFijo(val id: String = UUID.randomUUID().toString(), val concepto: String, val monto: Double, val pagado: Boolean = false)
+          data class FilaDiaCalculada(val fecha: LocalDate, val presupuestoDelDia: Double, val gastoReal: Double, val sobrante: Double)
+
+          data class BudgetState(
+              val sueldo: Double = 0.0,
+              val saldoPrevio: Double = 0.0,
+              val fechaInicio: LocalDate = LocalDate.of(2026, 10, 6),
+              val fechaFin: LocalDate = LocalDate.of(2026, 11, 4),
+              val ajusteManualPorDia: Double? = null,
+              val gastosFijos: List<GastoFijo> = listOf(
+                  GastoFijo(concepto = "Alquiler / Expensas", monto = 0.0),
+                  GastoFijo(concepto = "Servicios", monto = 0.0)
+              ),
+              val gastosDiarios: Map<LocalDate, Double> = emptyMap()
+          )
+
+          class BudgetViewModel : ViewModel() {
+              private val _state = MutableStateFlow(BudgetState())
+              val state = _state.asStateFlow()
+
+              fun updateSueldo(monto: Double) = _state.update { it.copy(sueldo = monto) }
+              fun updateSaldoPrevio(monto: Double) = _state.update { it.copy(saldoPrevio = monto) }
+              fun updateAjusteManual(monto: Double?) = _state.update { it.copy(ajusteManualPorDia = monto) }
+              fun addGastoFijo(concepto: String, monto: Double) = _state.update { it.copy(gastosFijos = it.gastosFijos + GastoFijo(concepto = concepto, monto = monto)) }
+              fun toggleGastoFijo(id: String) = _state.update { s -> s.copy(gastosFijos = s.gastosFijos.map { if (it.id == id) it.copy(pagado = !it.pagado) else it }) }
+              fun setGastoDiario(fecha: LocalDate, monto: Double) = _state.update { s -> s.copy(gastosDiarios = s.gastosDiarios + (fecha to monto)) }
+
+              val totalDisponible: Double get() = _state.value.sueldo + _state.value.saldoPrevio
+              val totalGastosFijos: Double get() = _state.value.gastosFijos.sumOf { it.monto }
+              val todaviaPorPagar: Double get() = _state.value.gastosFijos.filter { !it.pagado }.sumOf { it.monto }
+              val disponibleDiaADia: Double get() = (totalDisponible - totalGastosFijos).coerceAtLeast(0.0)
+              val diasPeriodo: Long get() = ChronoUnit.DAYS.between(_state.value.fechaInicio, _state.value.fechaFin) + 1
+              val montoBasePorDia: Double get() = if (diasPeriodo > 0) disponibleDiaADia / diasPeriodo else 0.0
+              val montoDiarioQueRige: Double get() = _state.value.ajusteManualPorDia ?: montoBasePorDia
+
+              fun calcularTablaDiaria(): List<FilaDiaCalculada> {
+                  val s = _state.value
+                  val list = mutableListOf<FilaDiaCalculada>()
+                  var fechaActual = s.fechaInicio
+                  var sobranteAnterior = 0.0
+                  val baseDiaria = montoDiarioQueRige
+
+                  while (!fechaActual.isAfter(s.fechaFin)) {
+                      val presupuestoHoy = baseDiaria + sobranteAnterior
+                      val gastoReal = s.gastosDiarios[fechaActual] ?: 0.0
+                      val sobranteHoy = presupuestoHoy - gastoReal
+                      list.add(FilaDiaCalculada(fechaActual, presupuestoHoy, gastoReal, sobranteHoy))
+                      sobranteAnterior = sobranteHoy
+                      fechaActual = fechaActual.plusDays(1)
+                  }
+                  return list
+              }
+          }
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContent { MaterialTheme(colorScheme = darkColorScheme()) { BudgetApp() } }
+              }
+          }
+
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun BudgetApp(vm: BudgetViewModel = viewModel()) {
+              var selectedTab by remember { mutableIntStateOf(0) }
+              val tabs = listOf("Resumen", "Gastos Fijos", "Día a Día")
+
+              Scaffold(
+                  topBar = { TopAppBar(title = { Text("Administración del Sueldo") }) },
+                  bottomBar = {
+                      NavigationBar {
+                          tabs.forEachIndexed { index, title ->
+                              NavigationBarItem(
+                                  selected = selectedTab == index,
+                                  onClick = { selectedTab = index },
+                                  label = { Text(title) },
+                                  icon = {
+                                      when (index) {
+                                          0 -> Icon(Icons.Default.Home, null)
+                                          1 -> Icon(Icons.Default.List, null)
+                                          else -> Icon(Icons.Default.DateRange, null)
+                                      }
+                                  }
+                              )
+                          }
+                      }
+                  }
+              ) { padding ->
+                  Box(modifier = Modifier.padding(padding)) {
+                      when (selectedTab) {
+                          0 -> ResumenScreen(vm)
+                          1 -> GastosFijosScreen(vm)
+                          2 -> DiaADiaScreen(vm)
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun ResumenScreen(vm: BudgetViewModel) {
+              val state by vm.state.collectAsState()
+              LazyColumn(modifier = Modifier.padding(16.dp).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                  item { Text("Ingresos & Disponibilidad", fontWeight = FontWeight.Bold) }
+                  item {
+                      OutlinedTextField(
+                          value = if (state.sueldo == 0.0) "" else state.sueldo.toString(),
+                          onValueChange = { vm.updateSueldo(it.toDoubleOrNull() ?: 0.0) },
+                          label = { Text("Sueldo") },
+                          prefix = { Text("$ ") },
+                          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                          modifier = Modifier.fillMaxWidth()
+                      )
+                  }
+                  item {
+                      OutlinedTextField(
+                          value = if (state.saldoPrevio == 0.0) "" else state.saldoPrevio.toString(),
+                          onValueChange = { vm.updateSaldoPrevio(it.toDoubleOrNull() ?: 0.0) },
+                          label = { Text("Saldo previo en cuenta") },
+                          prefix = { Text("$ ") },
+                          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                          modifier = Modifier.fillMaxWidth()
+                      )
+                  }
+                  item {
+                      Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                          Column(Modifier.padding(16.dp).fillMaxWidth()) {
+                              Text("Total Disponible: $ " + String.format(Locale.GERMANY, "%,.2f", vm.totalDisponible))
+                              Text("Disponible Día a Día: $ " + String.format(Locale.GERMANY, "%,.2f", vm.disponibleDiaADia))
+                          }
+                      }
+                  }
+                  item {
+                      Text("Monto base por día: $ " + String.format(Locale.GERMANY, "%,.2f", vm.montoBasePorDia))
+                      Text("Monto que rige: $ " + String.format(Locale.GERMANY, "%,.2f", vm.montoDiarioQueRige), fontWeight = FontWeight.Bold)
+                  }
+              }
+          }
+
+          @Composable
+          fun GastosFijosScreen(vm: BudgetViewModel) {
+              val state by vm.state.collectAsState()
+              var concepto by remember { mutableStateOf("") }
+              var monto by remember { mutableStateOf("") }
+
+              Column(Modifier.padding(16.dp).fillMaxSize()) {
+                  Card(modifier = Modifier.fillMaxWidth()) {
+                      Row(Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                          Text("Total: $ " + String.format(Locale.GERMANY, "%,.2f", vm.totalGastosFijos))
+                          Text("Por pagar: $ " + String.format(Locale.GERMANY, "%,.2f", vm.todaviaPorPagar), color = MaterialTheme.colorScheme.error)
+                      }
+                  }
+                  Spacer(modifier = Modifier.height(8.dp))
+                  Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                      OutlinedTextField(value = concepto, onValueChange = { concepto = it }, label = { Text("Concepto") }, modifier = Modifier.weight(1f))
+                      OutlinedTextField(value = monto, onValueChange = { monto = it }, label = { Text("Monto") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.width(110.dp))
+                      IconButton(onClick = {
+                          val m = monto.toDoubleOrNull() ?: 0.0
+                          if (concepto.isNotBlank() && m > 0) {
+                              vm.addGastoFijo(concepto, m)
+                              concepto = ""; monto = ""
+                          }
+                      }) { Icon(Icons.Default.Add, null) }
+                  }
+                  Spacer(modifier = Modifier.height(8.dp))
+                  LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                      items(state.gastosFijos, key = { it.id }) { item ->
+                          Card(modifier = Modifier.fillMaxWidth()) {
+                              Row(Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                  Column {
+                                      Text(item.concepto, fontWeight = FontWeight.Bold)
+                                      Text("$ " + String.format(Locale.GERMANY, "%,.2f", item.monto))
+                                  }
+                                  Checkbox(checked = item.pagado, onCheckedChange = { vm.toggleGastoFijo(item.id) })
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun DiaADiaScreen(vm: BudgetViewModel) {
+              val tabla = vm.calcularTablaDiaria()
+              var diaAEditar by remember { mutableStateOf<LocalDate?>(null) }
+              var gastoTxt by remember { mutableStateOf("") }
+
+              Column(Modifier.fillMaxSize().padding(8.dp)) {
+                  val totalGastado = tabla.sumOf { it.gastoReal }
+                  val remanente = vm.disponibleDiaADia - totalGastado
+                  Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                      Row(Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                          Text("Gastado: $ " + String.format(Locale.GERMANY, "%,.2f", totalGastado))
+                          Text("Queda: $ " + String.format(Locale.GERMANY, "%,.2f", remanente), fontWeight = FontWeight.Bold)
+                      }
+                  }
+                  LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                      items(tabla) { fila ->
+                          Card(modifier = Modifier.fillMaxWidth(), onClick = { diaAEditar = fila.fecha; gastoTxt = if (fila.gastoReal == 0.0) "" else fila.gastoReal.toString() }) {
+                              Row(Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                  Column {
+                                      val dia = fila.fecha.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale("es", "AR"))
+                                      Text(fila.fecha.toString() + " (" + dia + ")", fontWeight = FontWeight.Bold)
+                                      Text("Presupuesto: $ " + String.format(Locale.GERMANY, "%,.2f", fila.presupuestoDelDia), style = MaterialTheme.typography.bodySmall)
+                                  }
+                                  Column(horizontalAlignment = Alignment.End) {
+                                      Text("Gastado: $ " + String.format(Locale.GERMANY, "%,.2f", fila.gastoReal))
+                                      Text("Sobrante: $ " + String.format(Locale.GERMANY, "%,.2f", fila.sobrante), color = if (fila.sobrante >= 0) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+
+              diaAEditar?.let { fecha ->
+                  AlertDialog(
+                      onDismissRequest = { diaAEditar = null },
+                      title = { Text("Gasto del " + fecha.toString()) },
+                      text = { OutlinedTextField(value = gastoTxt, onValueChange = { gastoTxt = it }, label = { Text("Monto gastado") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true) },
+                      confirmButton = { TextButton(onClick = { vm.setGastoDiario(fecha, gastoTxt.toDoubleOrNull() ?: 0.0); diaAEditar = null }) { Text("Guardar") } },
+                      dismissButton = { TextButton(onClick = { diaAEditar = null }) { Text("Cancelar") } }
+                  )
+              }
+          }
+          EOF
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+
+      - name: Compilar APK (assembleDebug)
+        run: gradle assembleDebug
+
+      - name: Subir APK generado
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiPresupuestoApp
+          path: app/build/outputs/apk/debug/app-debug.apk
